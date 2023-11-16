@@ -111,3 +111,4 @@ schedule_df.to_csv("horario_parte1.csv", index_label=["day", "hour"])
 
 
 
+
