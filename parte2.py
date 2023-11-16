@@ -1,120 +1,95 @@
 from pulp import LpVariable, LpProblem, LpMinimize, lpSum, value
 import pandas as pd
 
-# Load demand and capacity data for multiple branches
+# Load demand and capacity data
 demanda = pd.read_csv("demanda.csv")
 capacidad = pd.read_csv("capacidad.csv")
 
 # Define the time slots from 7:30 AM to 6:30 PM
 time_slots = list(range(7, 19))  # Assuming 15-minute slots for simplicity
-days_of_week = range(1, 6)  # Assuming a work week from Monday to Friday
+days_of_week = range(1, 7)  # Assuming a work week from Monday to Saturday
 
-# Create a binary variable for each employee, day of the week, time slot, state, branch, and contract type
-employees = [1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024]
-states = ['Trabaja', 'Pausa Activa', 'Nada']
-branches = [60, 61, 62, 63, 64]  # Example branches, adjust as needed
-contract_types = ['TC', 'MT']  # Time Completo (TC) and Medio Tiempo (MT)
+# Create a binary variable for each employee, day of the week, time slot, and state
+employees = list(capacidad['documento'])
+states = ['Trabaja', 'Pausa Activa', 'Almuerza', 'Nada']
 
-# Create a binary variable for the absolute difference between demand and capacity
-abs_diff = LpVariable.dicts('abs_diff', (days_of_week, time_slots, branches), cat='Binary')
-
-# Create a binary variable for each employee, day of the week, time slot, state, branch, and contract type
-x = LpVariable.dicts('x', (days_of_week, time_slots, employees, states, branches, contract_types), cat='Binary')
+# Create a binary variable for each employee, day of the week, time slot, and state
+x = LpVariable.dicts('x', (employees, days_of_week, time_slots, states), cat='Binary')
 
 # Create the LP problem
-prob = LpProblem("Employee_Schedule_Optimization_Parte2", LpMinimize)
+prob = LpProblem("Employee_Schedule_Optimization", LpMinimize)
 
-# Define the function objective to minimize the absolute difference
-prob += lpSum(abs_diff[d][t][b] for d in days_of_week for t in time_slots for b in branches)
+# Demand and Capacity constraints for Part 1
+for t in time_slots:
+    for d in days_of_week:
+        prob += lpSum(x[e][d][t]['Trabaja'] for e in employees) >= demanda.at[t, 'demanda']
+        prob += lpSum(x[e][d][t]['Trabaja'] for e in employees) <= capacidad[(capacidad['contrato'] == 'TC')]['documento'].count()
 
-# Add constraints to ensure that abs_diff reflects the absolute difference
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    for s in states:
-                        prob += abs_diff[d][t][b] >= x[d][t][e][s][b][ct] * demanda.at[t - 7, 'demanda']
+# Additional constraints for Part 2
+for e in employees:
+    for d in days_of_week:
+        if capacidad.loc[capacidad['documento'] == e, 'contrato'].values[0] == 'TC':
+            # Time for lunch for full-time employees on weekdays
+            prob += lpSum(x[e][d][t]['Almuerza'] for t in time_slots) == 1.5
+            # Constant start and end time for full-time employees on weekdays
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in time_slots if t < 7 or t >= 19) == 0  # no work before 7:30 am and after 4:30 pm
+        else:
+            # Constant start time for part-time employees on weekdays
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in time_slots if t < 7 or t >= 19) == 0  # no work before 7:30 am and after 4:30 pm
 
-# Restricciones de trabajo continuo antes de pausa o almuerzo (adaptadas para múltiples sucursales)
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    if t + 3 in time_slots:
-                        prob += lpSum(x[d][t + i][e]['Trabaja'][b][ct] for i in range(4) if t + i in time_slots) >= x[d][t][e]['Trabaja'][b][ct]
+        # Additional constraints for almuerzo
+        if d in range(1, 6):  # Check if it's a weekday
+            if capacidad.loc[capacidad['documento'] == e, 'contrato'].values[0] == 'TC':
+                prob += lpSum(x[e][d][t]['Almuerza'] for t in range(7, 19)) == 1.5  # Lunch from 12:00 pm to 1:30 pm
+                prob += lpSum(x[e][d][t]['Almuerza'] for t in range(1, 7)if t in time_slots) == 0  # No lunch before 7:30 am
+                prob += lpSum(x[e][d][t]['Almuerza'] for t in range(19, 24)if t in time_slots) == 0  # No lunch after 4:30 pm
+            else:
+                prob += lpSum(x[e][d][t]['Almuerza'] for t in time_slots) == 0  # No lunch for part-time employees
 
-                    if t + 8 in time_slots:
-                        prob += lpSum(x[d][t + i][e]['Trabaja'][b][ct] for i in range(9) if t + i in time_slots) <= 2 * x[d][t][e]['Trabaja'][b][ct]
+# Additional constraints for MT employees
+for e in employees:
+    contrato_empleado = capacidad.loc[capacidad['documento'] == e, 'contrato'].iloc[0]
+    if contrato_empleado == 'MT':
+        for d in days_of_week:
+            # No lunch for MT employees
+            prob += lpSum(x[e][d][t]['Almuerza'] for t in time_slots) == 0
 
-# Restricciones para pausas activas (adaptadas para múltiples sucursales)
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    if t + 3 in time_slots:
-                        prob += lpSum(x[d][t + i]['Pausa Activa'][b][ct] for i in range(4) if t + i in time_slots) <= x[d][t][e]['Trabaja'][b][ct]
+            # Constant start and end time for MT employees on weekdays
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in range(1, 7)if t in time_slots) == 0  # no work before 7:30 am
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in range(18, 24)if t in time_slots) == 0  # no work after 4:30 pm
 
-# Restricción: Al menos 1 empleado debe estar en algún estado en cada franja horaria
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                prob += lpSum(x[d][t][e]['Trabaja'][b][ct] for e in employees) >= 1
+# Constant end time for all employees on all days
+for e in employees:
+    prob += lpSum(x[e][d][t]['Trabaja'] for d in days_of_week for t in range(18, 24)if t in time_slots) == 0  # no work after 4:30 pm
 
-# Restricción: Duración de la jornada laboral de 8 horas
-for d in days_of_week:
-    for b in branches:
-        for ct in contract_types:
-            for e in employees:
-                prob += lpSum(x[d][t][e]['Trabaja'][b][ct] for t in time_slots) == 8
+# All employees must start work between 7:30 am and 4:30 pm on weekdays
+for e in employees:
+    prob += lpSum(x[e][d][t]['Trabaja'] for d in days_of_week for t in range(7, 19)) >= 1
+    prob += lpSum(x[e][d][t]['Trabaja'] for d in days_of_week for t in range(18, 24)if t in time_slots) == 0
 
-# Restricción: El horario de los empleados debe ser continuo
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    prob += lpSum(x[d][t][e][s][b][ct] for s in states if s != 'Nada') <= 1
-
-# Restricción: Último estado de la jornada laboral debe ser Trabaja
-for d in days_of_week:
-    for b in branches:
-        for ct in contract_types:
-            for e in employees:
-                prob += lpSum(x[d][t][e][s][b][ct] for t in time_slots for s in states if s == 'Trabaja') == 1
-
-# Restricción: Duración de la franja de trabajo entre 1 y 2 horas
-for d in days_of_week:
-    for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    prob += lpSum(x[d][t][e][s][b][ct] for s in states if s != 'Nada') >= 1
-                    prob += lpSum(x[d][t][e][s][b][ct] for s in states if s != 'Nada') <= 2
+# All employees must start work between 7:30 am and 11:00 am on Saturdays
+for e in employees:
+    for d in days_of_week:
+        if d == 6:  # Check if it's Saturday
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in range(1, 7)if t in time_slots) == 0  # no work before 7:30 am
+            prob += lpSum(x[e][d][t]['Trabaja'] for t in range(11, 24)if t in time_slots) == 0  # no work after 11:00 am
 
 # Solve the problem
 prob.solve()
 
 # Create a DataFrame to store the schedule
 schedule_df = pd.DataFrame(index=pd.MultiIndex.from_product([days_of_week, time_slots], names=['day', 'hour']),
-                           columns=pd.MultiIndex.from_product([employees, branches, contract_types], names=['employee', 'branch', 'contract_type']), data="")
+                           columns=employees, data="")
 
 # Populate the DataFrame with the optimized schedule
 for d in days_of_week:
     for t in time_slots:
-        for b in branches:
-            for ct in contract_types:
-                for e in employees:
-                    for s in states:
-                        if value(x[d][t][e][s][b][ct]) == 1:
-                            schedule_df.at[(d, t), (e, b, ct)] = s
+        for e in employees:
+            for s in states:
+                if value(x[e][d][t][s]) == 1:
+                    schedule_df.at[(d, t), e] = s
 
 # Export the DataFrame to a CSV file
-schedule_df.to_csv("optimized_horario_parte2.csv", index_label=["day", "hour"])
-print("Resultados guardados en el archivo optimized_horario_parte2.csv")
-
+schedule_df.to_csv("horario_parte2.csv", index_label=["day", "hour"])
 
 
