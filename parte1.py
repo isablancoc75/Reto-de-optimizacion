@@ -10,7 +10,9 @@ time_slots = list(range(7, 19))  # Assuming 15-minute slots for simplicity
 days_of_week = range(1, 6)  # Assuming a work week from Monday to Friday
 
 # Create a binary variable for each employee, day of the week, time slot, and state
-employees = list(capacidad['documento'])
+employees = [1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029,
+              1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044,
+              1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053]
 states = ['Trabaja', 'Pausa Activa', 'Almuerza', 'Nada']
 
 # Create a binary variable for each employee, day of the week, time slot, and state
@@ -24,13 +26,7 @@ for e in employees:
     for d in days_of_week:
         for t in time_slots:
             prob += lpSum(x[e][d][t][s] for s in states) == 1  # Employee is in one state at a time
-            
-            # Verificar si hay al menos una fila que cumple con la condición
-            demanda_filtrada = demanda[(demanda['suc_cod'] == 834) & (demanda['fecha_hora'] == f'12/11/2023 {t}:00')]
-            
-            if not demanda_filtrada.empty:
-                prob += x[e][d][t]['Trabaja'] - demanda_filtrada['demanda'].values[0] <= 0
-
+            prob += x[e][d][t]['Trabaja'] - demanda.at[t, 'demanda'] <= 0  # Fix this line
 
 # Restricciones de trabajo continuo antes de pausa o almuerzo
 for e in employees:
